@@ -1,0 +1,119 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#Introduction
+I am analyzing neogene expression in PDX data.
+
+#Load libraries
+```{r}
+library(Seurat)
+library(scater)
+library(readxl)
+library(stringr)
+library(tidyr)
+library(plyr)
+source('../../Utilities/Utilities.r')
+source('../../Utilities/Processing_Utilities.r')
+```
+
+#importing data from file storage
+
+Files are stored on my MD Anderson drive. I am extracting the the path to each library and generating some meta data.
+```{r}
+list.dirs('/Volumes/ludwig_lab/CellRanger/data_output/', recursive = F)
+list_of_files <- path_input('/Volumes/ludwig_lab/CellRanger/data_output/', library.split = 7, sample.split = 1)
+list_of_files <- list_of_files[c(4,6,8,11,13),]
+```
+
+
+#converting from H5 to seurat objects
+```{r}
+PDX_neogenes.list.h5 <- lapply(list_of_files$h5, Read10X_h5)
+names(PDX_neogenes.list.h5) <- list_of_files$library_id
+PDX_neogenes.list <- lapply( PDX_neogenes.list.h5 ,function(x) {CreateSeuratObject(counts = x) })
+names(PDX_neogenes.list) <- list_of_files$library_id
+
+for(i in 1:length(PDX_neogenes.list)) {
+  PDX_neogenes.list[[i]]<- RenameCells(object = PDX_neogenes.list[[i]], new.names = paste0(
+    sapply(strsplit(as.character(colnames(PDX_neogenes.list[[i]])), split="-"), "[[", 1),
+    "-", i))
+}
+
+PDX_neogenes <- Reduce(merge, PDX_neogenes.list)
+```
+
+#adding the metadata
+```{r}
+PDX_neogenes <- PercentageFeatureSet( PDX_neogenes, pattern = "^MT-", col.name = "percent.mt", assay = 'RNA')
+
+gemgroup <- sapply(strsplit(rownames(PDX_neogenes@meta.data), split="-"), "[[", 2)
+PDX_neogenes<- AddMetaData(object=PDX_neogenes, metadata=data.frame(gemgroup=gemgroup, row.names=rownames(PDX_neogenes@meta.data)))
+
+PDX_neogenes$orig.ident <- mapvalues(PDX_neogenes$gemgroup,unique(PDX_neogenes$gemgroup), as.character(list_of_files$library_id))
+
+PDX_neogenes$sample_type <-  mapvalues(PDX_neogenes$gemgroup, unique(PDX_neogenes$gemgroup), as.character(list_of_files$sample_type))
+
+PDX_neogenes$lab_id <- mapvalues(PDX_neogenes$orig.ident, unique(PDX_neogenes$orig.ident), c('DSRCT-1', 'DSRCT-4', 'DSRCT-2',
+                                                                                             'CDS-1', 'ES-4'))
+```
+
+```{r}
+PDX_neogenes_filtered <- subset(PDX_neogenes, subset = percent.mt < 10 & nCount_RNA > 1000 & nFeature_RNA > 500)
+```
+
+```{r}
+PDX_neogenes_filtered <- PDX_neogenes_filtered %>%
+  NormalizeData() %>%
+  FindVariableFeatures() %>%
+  ScaleData() %>%
+  RunPCA()
+
+ElbowPlot(PDX_neogenes_filtered)
+```
+
+```{r}
+PDX_neogenes_filtered <- RunUMAP(PDX_neogenes_filtered, dims = 1:15)
+```
+
+```{r}
+PDX_neogenes_filtered@active.ident <- factor(PDX_neogenes_filtered$lab_id)
+DimPlot(PDX_neogenes_filtered, group.by = 'lab_id', label = T)
+```
+
+#Generate Signatures
+The gene signatures are used to confirm the phenotype of the various sarcoma.
+```{r}
+gene_sigs <- read.delim("../gene_signatures.txt")
+gene_sigs <- as.list(gene_sigs)
+signature_names <- names(gene_sigs)
+gene_sigs <- lapply(gene_sigs, function(x) gsub(" ", "", x))
+
+#generate a rename vector to easily rename each of the signatures
+rename_vector <- setNames( paste0('Cluster', 1:length(signature_names)), paste0(signature_names, '_Signature'))
+
+#use AddModuleScore to assess the signature expression in each library
+PDX_neogenes_filtered <- AddModuleScore(PDX_neogenes_filtered, features = gene_sigs, name = 'Cluster', ctrl = 50)
+#DSRCT_patient_data@meta.data <- DSRCT_patient_data@meta.data %>% dplyr::select(-c(AR_Signature))
+PDX_neogenes_filtered@meta.data <- PDX_neogenes_filtered@meta.data %>% dplyr::rename(rename_vector)
+```
+
+```{r}
+VlnPlot(PDX_neogenes_filtered, features = names(rename_vector))
+```
+```{r, fig.width=6}
+genes <- rownames(PDX_neogenes_filtered)[grep('DSRCT-NG', rownames(PDX_neogenes_filtered))]
+DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r, fig.width=6}
+genes <- rownames(PDX_neogenes_filtered)[grep('Ew-NG', rownames(PDX_neogenes_filtered))]
+DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r, fig.width=6}
+genes <- rownames(PDX_neogenes_filtered)[grep('CIC-NG', rownames(PDX_neogenes_filtered))]
+DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
