@@ -24,7 +24,7 @@ Files are stored on my MD Anderson drive. I am extracting the the path to each l
 ```{r}
 list.dirs('/Volumes/ludwig_lab/CellRanger/data_output/', recursive = F)
 list_of_files <- path_input('/Volumes/ludwig_lab/CellRanger/data_output/', library.split = 7, sample.split = 1)
-list_of_files <- list_of_files[c(4,6,8,11,13),]
+list_of_files <- list_of_files[-c(1,2,3,5,7,10,12),]
 ```
 
 
@@ -54,14 +54,94 @@ PDX_neogenes<- AddMetaData(object=PDX_neogenes, metadata=data.frame(gemgroup=gem
 PDX_neogenes$orig.ident <- mapvalues(PDX_neogenes$gemgroup,unique(PDX_neogenes$gemgroup), as.character(list_of_files$library_id))
 
 PDX_neogenes$sample_type <-  mapvalues(PDX_neogenes$gemgroup, unique(PDX_neogenes$gemgroup), as.character(list_of_files$sample_type))
-
-PDX_neogenes$lab_id <- mapvalues(PDX_neogenes$orig.ident, unique(PDX_neogenes$orig.ident), c('DSRCT-1', 'DSRCT-4', 'DSRCT-2',
-                                                                                             'CDS-1', 'ES-4'))
 ```
 
 ```{r}
-PDX_neogenes_filtered <- subset(PDX_neogenes, subset = percent.mt < 10 & nCount_RNA > 1000 & nFeature_RNA > 500)
+PDX_labels <- read.csv('../PDX_dissociation_labels.csv')
+PDX_labels
+PDX_neogenes$lab_id <- mapvalues(PDX_neogenes$orig.ident, unique(PDX_neogenes$orig.ident), c('DSRCT-1', 'DSRCT-4', 'DSRCT-2',
+                                                                                             'ES-1','CDS-1', 'ES-4',
+                                                                                             'ES-6', 'OS-SA98', 'OS-31',
+                                                                                             'OS-1'))
+
+PDX_neogenes@meta.data %>% group_by(orig.ident, lab_id) %>% summarise(n=n())
 ```
+
+
+
+
+#quality control
+```{r}
+RidgePlot(PDX_neogenes, features = 'nCount_RNA', group.by = 'lab_id')
+RidgePlot(PDX_neogenes, features = 'nFeature_RNA', group.by = 'lab_id')
+RidgePlot(PDX_neogenes, features = 'percent.mt', group.by = 'lab_id')
+PDX_neogenes
+```
+
+
+#Outlier
+Based on OSCA
+
+```{r}
+PDX_neogenes@active.ident <- factor(PDX_neogenes$lab_id)
+PDX_neogenes.sce <- as.SingleCellExperiment(PDX_neogenes)
+```
+
+```{r}
+discard.mito <- isOutlier(PDX_neogenes.sce$percent.mt,
+    type="higher", batch=PDX_neogenes.sce$lab_id, nmads = 2)
+mito.plot <- plotColData(PDX_neogenes.sce, x="lab_id", y="percent.mt",
+    colour_by=I(discard.mito)) + theme(axis.text.x = element_text(angle =90)) + xlab('') + labs(fill = 'Outlier') + ylab('% Mitochondrial Mapping')
+
+discard.counts <- isOutlier(PDX_neogenes.sce$nCount_RNA, nmads = 2, log = TRUE,
+    type="lower", batch=PDX_neogenes.sce$lab_id)
+counts.plot <- plotColData(PDX_neogenes.sce, x="lab_id", y="nCount_RNA",
+    colour_by=I(discard.counts)) + theme(axis.text.x = element_text(angle =90)) + xlab('') + ylab('Counts')
+
+discard.features <- isOutlier(PDX_neogenes.sce$nFeature_RNA, nmads = 2, log = TRUE,
+    type="lower", batch=PDX_neogenes.sce$lab_id)
+gene.plot <- plotColData(PDX_neogenes.sce, x="lab_id", y="nFeature_RNA",
+    colour_by=I(discard.features)) + theme(axis.text.x = element_text(angle =90)) + xlab('') + ylab('Genes')
+```
+
+```{r}
+mito.plot
+counts.plot + scale_y_log10()
+gene.plot + scale_y_log10()
+```
+
+#save original data
+```{r}
+saveRDS(PDX_neogenes, '/Volumes/ludwig_lab/NeoGenes/RDS/PDX_neogenes_original.rds')
+```
+
+
+#filter out low quality cells
+
+```{r}
+PDX_neogenes <- AddMetaData(PDX_neogenes, discard.counts, col.name = 'discard.counts') 
+PDX_neogenes <- AddMetaData(PDX_neogenes, discard.mito, col.name = 'discard.mito') 
+PDX_neogenes <- AddMetaData(PDX_neogenes, discard.features, col.name = 'discard.features')
+PDX_neogenes_filtered <- subset(PDX_neogenes, subset = discard.features == FALSE & 
+                                  #discard.mito == FALSE & 
+                                  discard.counts == FALSE & 
+                                  percent.mt < 10 & nCount_RNA > 1000 & nFeature_RNA > 500)
+```
+
+
+```{r}
+VlnPlot(PDX_neogenes, features = 'WT1')
+```
+
+#quality control
+```{r}
+RidgePlot(PDX_neogenes_filtered, features = 'nCount_RNA', group.by = 'lab_id')
+RidgePlot(PDX_neogenes_filtered, features = 'nFeature_RNA', group.by = 'lab_id')
+RidgePlot(PDX_neogenes_filtered, features = 'percent.mt', group.by = 'lab_id')
+PDX_neogenes_filtered
+```
+
+#normalize
 
 ```{r}
 PDX_neogenes_filtered <- PDX_neogenes_filtered %>%
@@ -77,9 +157,18 @@ ElbowPlot(PDX_neogenes_filtered)
 PDX_neogenes_filtered <- RunUMAP(PDX_neogenes_filtered, dims = 1:15)
 ```
 
+
+```{r}
+saveRDS(PDX_neogenes_filtered, '/Volumes/ludwig_lab/NeoGenes/RDS/2023-05-1 PDX_neogenes_filtered.rds')
+```
+
+
 ```{r}
 PDX_neogenes_filtered@active.ident <- factor(PDX_neogenes_filtered$lab_id)
 DimPlot(PDX_neogenes_filtered, group.by = 'lab_id', label = T)
+FeaturePlot(PDX_neogenes_filtered, 'COL1A1')
+FeaturePlot(PDX_neogenes_filtered, 'AR')
+FeaturePlot(PDX_neogenes_filtered, 'CCND1')
 ```
 
 #Generate Signatures
@@ -87,20 +176,28 @@ The gene signatures are used to confirm the phenotype of the various sarcoma.
 ```{r}
 gene_sigs <- read.delim("../gene_signatures.txt")
 gene_sigs <- as.list(gene_sigs)
-signature_names <- names(gene_sigs)
 gene_sigs <- lapply(gene_sigs, function(x) gsub(" ", "", x))
+gene_sigs[["EWS.NFATc2"]] <- EWS.NFATc2
+signature_names <- names(gene_sigs)
 
 #generate a rename vector to easily rename each of the signatures
 rename_vector <- setNames( paste0('Cluster', 1:length(signature_names)), paste0(signature_names, '_Signature'))
 
 #use AddModuleScore to assess the signature expression in each library
 PDX_neogenes_filtered <- AddModuleScore(PDX_neogenes_filtered, features = gene_sigs, name = 'Cluster', ctrl = 50)
-#DSRCT_patient_data@meta.data <- DSRCT_patient_data@meta.data %>% dplyr::select(-c(AR_Signature))
+#PDX_neogenes_filtered@meta.data <- PDX_neogenes_filtered@meta.data %>% dplyr::select(-c(names(rename_vector)))
 PDX_neogenes_filtered@meta.data <- PDX_neogenes_filtered@meta.data %>% dplyr::rename(rename_vector)
 ```
 
-```{r}
+```{r, fig.width=5}
 VlnPlot(PDX_neogenes_filtered, features = names(rename_vector))
+VlnPlot(PDX_neogenes_filtered, features = 'TP53')
+VlnPlot(PDX_neogenes_filtered, features = 'NFATC2')
+
+VlnPlot(PDX_neogenes_filtered, features = 'EWS.FLI1_Signature') + NoLegend()
+VlnPlot(PDX_neogenes_filtered, features = 'Ew-NG8') + NoLegend()
+
+FeaturePlot(PDX_neogenes_filtered, 'AR_Signature')
 ```
 ```{r, fig.width=6}
 genes <- rownames(PDX_neogenes_filtered)[grep('DSRCT-NG', rownames(PDX_neogenes_filtered))]
@@ -116,4 +213,31 @@ DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_t
 genes <- rownames(PDX_neogenes_filtered)[grep('CIC-NG', rownames(PDX_neogenes_filtered))]
 DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
 ```
+```{r}
+DEGs <- FindAllMarkers(PDX_neogenes_filtered, only.pos = T, test.use = 'LR', return.thresh = 0.05, max.cells.per.ident = 1000)
+```
 
+```{r}
+top_DEGs <- DEGs %>% group_by(cluster) %>% top_n(20, avg_log2FC)
+```
+
+```{r}
+top_DEGs <- DEGs %>% group_by(cluster) %>% top_n(3, avg_log2FC) %>% pull(gene)
+DotPlot(PDX_neogenes_filtered, features = top_DEGs) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r}
+DotPlot(PDX_neogenes_filtered, features = c('CIC.DUX4_Signature', 'EWS.WT1_Signature', 'EWS.FLI1_Signature')) + theme(axis.text.x = element_text(angle =45, hjust=1)) + labs(x='', y ='')
+```
+
+
+Why does OS31 have NFATC genes
+```{r}
+VlnPlot(PDX_neogenes_filtered, features = 'CIC')
+VlnPlot(PDX_neogenes_filtered, features = 'NFATC2')
+VlnPlot(PDX_neogenes_filtered, features = 'NFAT-NG41')
+```
+```{r, fig.width=6}
+genes <- rownames(PDX_neogenes_filtered)[grep('NFAT-NG', rownames(PDX_neogenes_filtered))]
+DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
