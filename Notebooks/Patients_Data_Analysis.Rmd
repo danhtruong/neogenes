@@ -1,0 +1,187 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#Introduction
+I am analyzing neogene expression in Patient sarcoma data.
+
+#Load libraries
+```{r}
+library(Seurat)
+library(scater)
+library(readxl)
+library(stringr)
+library(tidyr)
+library(plyr)
+source('../../Utilities/Utilities.r')
+source('../../Utilities/Processing_Utilities.r')
+```
+
+#importing data from file storage
+
+Files are stored on my MD Anderson drive. I am extracting the the path to each library and generating some meta data.
+```{r}
+list.dirs('/Volumes/ludwig_lab/CellRanger/data_output/', recursive = F)
+list_of_files <- path_input('/Volumes/ludwig_lab/CellRanger/data_output/', library.split = 7, sample.split = 1)
+list_of_files <- list_of_files[c(3,5,7,10),]
+```
+
+#converting from H5 to seurat objects
+```{r}
+Patient_Sarcoma_neogenes.list.h5 <- lapply(list_of_files$h5, Read10X_h5)
+names(Patient_Sarcoma_neogenes.list.h5) <- list_of_files$library_id
+Patient_Sarcoma_neogenes.list <- lapply( Patient_Sarcoma_neogenes.list.h5 ,function(x) {CreateSeuratObject(counts = x) })
+names(Patient_Sarcoma_neogenes.list) <- list_of_files$library_id
+
+for(i in 1:length(Patient_Sarcoma_neogenes.list)) {
+  Patient_Sarcoma_neogenes.list[[i]]<- RenameCells(object = Patient_Sarcoma_neogenes.list[[i]], new.names = paste0(
+    sapply(strsplit(as.character(colnames(Patient_Sarcoma_neogenes.list[[i]])), split="-"), "[[", 1),
+    "-", i))
+}
+
+Patient_Sarcoma_data  <- Reduce(merge, Patient_Sarcoma_neogenes.list)
+```
+
+#adding the metadata
+```{r}
+Patient_Sarcoma_data <- PercentageFeatureSet( Patient_Sarcoma_data, pattern = "^MT-", col.name = "percent.mt", assay = 'RNA')
+
+gemgroup <- sapply(strsplit(rownames(Patient_Sarcoma_data@meta.data), split="-"), "[[", 2)
+Patient_Sarcoma_data<- AddMetaData(object=Patient_Sarcoma_data, metadata=data.frame(gemgroup=gemgroup, row.names=rownames(Patient_Sarcoma_data@meta.data)))
+
+Patient_Sarcoma_data$orig.ident <- mapvalues(Patient_Sarcoma_data$gemgroup,unique(Patient_Sarcoma_data$gemgroup), as.character(list_of_files$library_id))
+
+Patient_Sarcoma_data$sample_type <-  mapvalues(Patient_Sarcoma_data$gemgroup, unique(Patient_Sarcoma_data$gemgroup), as.character(list_of_files$sample_type))
+```
+
+```{r}
+Patient_Sarcoma_data$lab_id <- mapvalues(Patient_Sarcoma_data$orig.ident, unique(Patient_Sarcoma_data$orig.ident), c('DSRCT-1', 'DSRCT-4', 'DSRCT-2',
+                                                                                             'CDS-1' ))
+
+Patient_Sarcoma_data@meta.data %>% group_by(orig.ident, lab_id) %>% summarise(n=n())
+```
+
+#quality control
+```{r}
+RidgePlot(Patient_Sarcoma_data, features = 'nCount_RNA', group.by = 'lab_id') + scale_x_log10()
+RidgePlot(Patient_Sarcoma_data, features = 'nFeature_RNA', group.by = 'lab_id')+ scale_x_log10()
+RidgePlot(Patient_Sarcoma_data, features = 'percent.mt', group.by = 'lab_id')
+Patient_Sarcoma_data
+```
+#filter out low quality cells
+
+```{r}
+Patient_Sarcoma_data_filtered <- subset(Patient_Sarcoma_data, 
+                                        subset = 
+                                  percent.mt < 10 & nCount_RNA > 1000 & nFeature_RNA > 500)
+Patient_Sarcoma_data
+Patient_Sarcoma_data_filtered
+```
+
+#save original data
+```{r}
+saveRDS(Patient_Sarcoma_data, '/Volumes/ludwig_lab/NeoGenes/RDS/Patient_Sarcoma_dataoriginal.rds')
+```
+
+#normalize
+
+```{r}
+Patient_Sarcoma_data_filtered <- Patient_Sarcoma_data_filtered %>%
+  NormalizeData() %>%
+  FindVariableFeatures() %>%
+  ScaleData() %>%
+  RunPCA()
+
+ElbowPlot(Patient_Sarcoma_data_filtered)
+```
+
+```{r}
+Patient_Sarcoma_data_filtered <- RunUMAP(Patient_Sarcoma_data_filtered, dims = 1:15)
+```
+
+```{r}
+Patient_Sarcoma_data_filtered@active.ident <- factor(Patient_Sarcoma_data_filtered$lab_id)
+DimPlot(Patient_Sarcoma_data_filtered, group.by = 'lab_id', label = T)
+```
+
+```{r}
+FeaturePlot(Patient_Sarcoma_data_filtered, features = 'COL1A1')
+FeaturePlot(Patient_Sarcoma_data_filtered, features = 'ETV1')
+FeaturePlot(Patient_Sarcoma_data_filtered, features = 'ST6GALNAC5')
+FeaturePlot(Patient_Sarcoma_data_filtered, features = 'CD163')
+```
+
+```{r}
+Patient_Sarcoma_data_filtered <-  FindNeighbors(Patient_Sarcoma_data_filtered , dims=1:15) 
+Patient_Sarcoma_data_filtered <- FindClusters(Patient_Sarcoma_data_filtered,res = 1 )
+```
+
+```{r}
+DimPlot(Patient_Sarcoma_data_filtered, label = T)
+DimPlot(Patient_Sarcoma_data_filtered, group.by = 'lab_id', label = T)
+```
+```{r}
+Patient_Clusters_DEGs <- FindAllMarkers(Patient_Sarcoma_data_filtered, only.pos = T, test.use = 'LR', return.thresh = 0.05, max.cells.per.ident = 1000)
+```
+
+```{r}
+top_Patient_Clusters_DEGs <- Patient_Clusters_DEGs %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+```
+
+#Split the data
+```{r}
+Patient_Sarcoma_data_filtered_list <- SplitObject(Patient_Sarcoma_data_filtered, split.by = 'lab_id')
+```
+
+```{r}
+Patient_Sarcoma_data_filtered_list <- lapply(Patient_Sarcoma_data_filtered_list, function(x){
+  x %>% 
+  NormalizeData() %>%
+  FindVariableFeatures() %>%
+  ScaleData() %>%
+  RunPCA()
+})
+```
+
+```{r}
+lapply(Patient_Sarcoma_data_filtered_list,ElbowPlot)
+```
+
+```{r}
+Patient_Sarcoma_data_filtered_list <- lapply(Patient_Sarcoma_data_filtered_list, function(x){
+  RunUMAP(x, dims = 1:15)
+})
+```
+
+```{r}
+Patient_Sarcoma_data_filtered_list <- lapply(Patient_Sarcoma_data_filtered_list, function(x){
+  x <-  FindNeighbors(x , dims=1:15) 
+  x <- FindClusters(x )
+})
+```
+
+```{r}
+lapply(Patient_Sarcoma_data_filtered_list, function(x)
+  DimPlot(x, label= T) + NoLegend())
+```
+
+```{r}
+lapply(Patient_Sarcoma_data_filtered_list, function(x)
+  FeaturePlot(x, 'WT1'))
+```
+
+```{r}
+Patient_Clusters_DEG_list <- lapply(Patient_Sarcoma_data_filtered_list, function(x) FindAllMarkers(x, only.pos = T, test.use = 'LR', return.thresh = 0.05, max.cells.per.ident = 200))
+```
+
+```{r}
+saveRDS(Patient_Clusters_DEG_list, '../RDS/2023-05-01-Patient_Clusters_DEG_list.rds')
+```
+
+```{r}
+Patient_Clusters_DEG_list_top <- lapply(Patient_Clusters_DEG_list, function(x)
+  x %>% group_by(cluster) %>% top_n(10, avg_log2FC))
+```
+
+
