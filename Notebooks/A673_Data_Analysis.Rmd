@@ -1,0 +1,249 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#Introduction
+I am analyzing neogene expression in PDX data.
+
+#Load libraries
+```{r}
+library(Seurat)
+library(scater)
+library(readxl)
+library(stringr)
+library(tidyr)
+library(plyr)
+source('../../Utilities/Utilities.r')
+source('../../Utilities/Processing_Utilities.r')
+```
+
+#importing data from file storage
+
+Files are stored on my MD Anderson drive. I am extracting the the path to each library and generating some meta data.
+```{r}
+list.dirs('/Volumes/ludwig_lab/CellRanger/data_output/', recursive = F)
+list_of_files <- path_input('/Volumes/ludwig_lab/CellRanger/data_output/', library.split = 7, sample.split = 1)
+list_of_files <- list_of_files[c(1,2),]
+```
+
+#converting from H5 to seurat objects
+```{r}
+A673_neogenes.list.h5 <- lapply(list_of_files$h5, Read10X_h5)
+names(A673_neogenes.list.h5) <- list_of_files$library_id
+A673_neogenes.list <- lapply( A673_neogenes.list.h5 ,function(x) {CreateSeuratObject(counts = x) })
+names(A673_neogenes.list) <- list_of_files$library_id
+
+for(i in 1:length(A673_neogenes.list)) {
+  A673_neogenes.list[[i]]<- RenameCells(object = A673_neogenes.list[[i]], new.names = paste0(
+    sapply(strsplit(as.character(colnames(A673_neogenes.list[[i]])), split="-"), "[[", 1),
+    "-", i))
+}
+
+A673_neogenes_data  <- Reduce(merge, A673_neogenes.list)
+```
+
+
+#adding the metadata
+```{r}
+A673_neogenes_data <- PercentageFeatureSet( A673_neogenes_data, pattern = "^MT-", col.name = "percent.mt", assay = 'RNA')
+
+gemgroup <- sapply(strsplit(rownames(A673_neogenes_data@meta.data), split="-"), "[[", 2)
+A673_neogenes_data<- AddMetaData(object=A673_neogenes_data, metadata=data.frame(gemgroup=gemgroup, row.names=rownames(A673_neogenes_data@meta.data)))
+
+A673_neogenes_data$orig.ident <- mapvalues(A673_neogenes_data$gemgroup,unique(A673_neogenes_data$gemgroup), as.character(list_of_files$library_id))
+
+A673_neogenes_data$sample_type <-  mapvalues(A673_neogenes_data$gemgroup, unique(A673_neogenes_data$gemgroup), as.character(list_of_files$sample_type))
+```
+
+#quality control
+```{r}
+RidgePlot(A673_neogenes_data, features = 'nCount_RNA', group.by = 'orig.ident') + scale_x_log10()
+RidgePlot(A673_neogenes_data, features = 'nFeature_RNA', group.by = 'orig.ident')+ scale_x_log10()
+RidgePlot(A673_neogenes_data, features = 'percent.mt', group.by = 'orig.ident')
+A673_neogenes_data
+```
+
+#filter out low quality cells
+
+```{r}
+A673_neogenes_data_filtered <- subset(A673_neogenes_data, 
+                                        subset = 
+                                  percent.mt < 10 & nCount_RNA > 1500 & nFeature_RNA > 500)
+A673_neogenes_data
+A673_neogenes_data_filtered
+```
+
+#normalize
+
+```{r}
+A673_neogenes_data_filtered <- A673_neogenes_data_filtered %>%
+  NormalizeData() %>%
+  FindVariableFeatures() %>%
+  ScaleData() %>%
+  RunPCA()
+
+ElbowPlot(A673_neogenes_data_filtered)
+```
+
+```{r}
+A673_neogenes_data_filtered <- RunUMAP(A673_neogenes_data_filtered, dims = 1:10)
+```
+
+```{r}
+A673_neogenes_data_filtered <-  FindNeighbors(A673_neogenes_data_filtered , dims=1:10) 
+A673_neogenes_data_filtered <- FindClusters(A673_neogenes_data_filtered)
+```
+
+```{r, fig.width=9, fig.height = 4}
+DimPlot(A673_neogenes_data_filtered,  label = T) + 
+  DimPlot(A673_neogenes_data_filtered, group.by = 'orig.ident', label = T) + ggtitle('')
+FeaturePlot(A673_neogenes_data_filtered, 'nFeature_RNA')
+FeaturePlot(A673_neogenes_data_filtered, 'nCount_RNA')
+FeaturePlot(A673_neogenes_data_filtered, 'Ew-NG2')
+FeaturePlot(A673_neogenes_data_filtered, 'CD99')
+```
+#DEG
+```{r}
+A673_Clusters_DEGs <- FindAllMarkers(A673_neogenes_data_filtered, only.pos = T, test.use = 'LR', return.thresh = 0.05)
+```
+
+## 6 and 1 vs rest
+```{r}
+A673_Clusters_6vsES<- FindMarkers(A673_neogenes_data_filtered, 
+                                  ident.1 = '6',
+                                  ident.2 = as.character(c(2:5,7)),
+                                  test.use = 'LR', return.thresh = 0.05)
+
+A673_Clusters_1vsES<- FindMarkers(A673_neogenes_data_filtered, 
+                                  ident.1 = '1',
+                                  ident.2 = as.character(c(2:5,7)),
+                                  test.use = 'LR', return.thresh = 0.05)
+```
+
+```{r}
+A673_Clusters_1vs6 <- FindMarkers(A673_neogenes_data_filtered, 
+                                  ident.1 = '1',
+                                  ident.2 = '6',
+                                  test.use = 'LR', return.thresh = 0.05)
+```
+
+```{r}
+top_A673_Clusters_DEGs <- A673_Clusters_DEGs %>% group_by(cluster) %>% top_n(20, avg_log2FC)
+```
+
+
+# Signatures
+```{r}
+EWSR_FLI1_sigs <- read.delim("../../ewsr1-ko/EWSR-FLI1_sigs.txt")
+EWSR_FLI1_sigs <- as.list(EWSR_FLI1_sigs)
+EWSR_FLI1_sigs <- lapply(EWSR_FLI1_sigs, function(x) x[x !=''])
+#A673_neogenes_data_filtered <- AddModuleScore(A673_neogenes_data_filtered, features = EWSR_FLI1_sigs, ctrl = 100)
+#sig_names <- setNames(paste0('Cluster', c(1:length(EWSR_FLI1_sigs))), names(EWSR_FLI1_sigs))
+#A673_neogenes_data_filtered@meta.data <- A673_neogenes_data_filtered@meta.data %>% dplyr::rename(sig_names)
+```
+
+```{r}
+library(GSVA)
+library(GSEABase)
+#library(GSVAdata)
+library(msigdbr)
+```
+
+```{r}
+msigdbr_df <- msigdbr(species = "Homo sapiens")
+```
+
+```{r}
+gs_names <- unique(msigdbr_df$gs_name) %>% unique()
+View(data.frame(gs_names))
+```
+
+
+```{r}
+gene_sets <- c('GOBP_MESENCHYME_DEVELOPMENT')
+#genes_sets <- c('GOBP_MESENCHYME_DEVELOPMENT')
+
+msigdbr_df_gene_sets <- msigdbr_df %>% 
+  filter(gs_name %in% gene_sets)
+
+msigdbr_list = split(x = msigdbr_df_gene_sets$gene_symbol, f = msigdbr_df_gene_sets$gs_name)
+EWSR_FLI1_sigs <- c(EWSR_FLI1_sigs,msigdbr_list)
+```
+
+```{r}
+expr <- GetAssayData(A673_neogenes_data_filtered, assay = 'RNA', slot ='data') %>% as.matrix()
+```
+
+
+```{r}
+ES_gsva <- gsva(expr = expr, 
+gset.idx.list = EWSR_FLI1_sigs,
+ method = 'ssgsea',
+ kcdf = 'Gaussian', 
+ parallel.sz = 8)
+```
+
+```{r}
+A673_neogenes_data_filtered <- AddMetaData(A673_neogenes_data_filtered, metadata = t(ES_gsva), col.name = rownames(ES_gsva))
+```
+
+```{r, fig.height=4}
+VlnPlot(A673_neogenes_data_filtered, rownames(ES_gsva)[1:2])
+VlnPlot(A673_neogenes_data_filtered, rownames(ES_gsva)[c(2,5)])
+```
+#DotPlots
+##Neogenes
+```{r, fig.width=8}
+genes <- rownames(A673_neogenes_data_filtered)[grep('Ew-NG', rownames(A673_neogenes_data_filtered))]
+DotPlot(A673_neogenes_data_filtered, features = genes, cluster.idents = T) + theme(axis.text.x = element_text(angle =45, hjust=1)) +labs(x='', y ='')
+```
+##Top genes in Cluster 1
+```{r, fig.width=8}
+genes <- filter(top_A673_Clusters_DEGs, cluster == '1')$gene
+DotPlot(A673_neogenes_data_filtered, features = c(genes,'EWS.FLI1.UP_Dellatre','EWS.FLI1.DN_Dellatre', 'Ew-NG8') , cluster.idents = T) + theme(axis.text.x = element_text(angle =45, hjust=1)) + labs(x='',y='')
+```
+##Top genes in Cluster 6
+```{r, fig.width=8}
+genes <- filter(top_A673_Clusters_DEGs, cluster == '6')$gene
+DotPlot(A673_neogenes_data_filtered, features = c(genes,'EWS.FLI1.UP_Dellatre','EWS.FLI1.DN_Dellatre', 'Ew-NG8') , cluster.idents = T) + theme(axis.text.x = element_text(angle =45, hjust=1)) + labs(x='',y='')
+```
+```{r}
+library(ggvenn)
+gene_lists <- list(`EWS.FLI1.DN_Dellatre` = EWSR_FLI1_sigs$EWS.FLI1.DN_Dellatre,
+          `Cluster 1 FP KO` = A673_Clusters_1vsES %>% 
+            top_n(250, avg_log2FC)%>%
+            rownames(),
+          `Cluster 6 WT` =  A673_Clusters_6vsES %>% 
+            top_n(250, avg_log2FC) %>%
+            rownames())
+
+ggvenn(gene_lists, set_name_size = 4)
+```
+
+```{r}
+genes <- intersect(gene_lists$EWS.FLI1.DN_Dellatre, gene_lists$`Cluster 6 WT`)
+DotPlot(A673_neogenes_data_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+
+
+
+## Top genes in Cluster 5
+```{r, fig.width=8}
+genes <- filter(top_A673_Clusters_DEGs, cluster == '5')$gene
+DotPlot(A673_neogenes_data_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+## Top genes in Cluster 7
+```{r, fig.width=8}
+genes <- filter(top_A673_Clusters_DEGs, cluster == '7')$gene
+DotPlot(A673_neogenes_data_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r}
+A673_neogenes_data_filtered_ <- ScaleData(A673_neogenes_data_filtered[EWSR_FLI1_sigs$EWS.FLI1.DN_Dellatre,], features = EWSR_FLI1_sigs$EWS.FLI1.DN_Dellatre)
+
+DoHeatmap(A673_neogenes_data_filtered_, features = EWSR_FLI1_sigs$EWS.FLI1.DN_Dellatre)
+```
+
