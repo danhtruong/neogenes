@@ -11,6 +11,7 @@ I am analyzing neogene expression in Patient sarcoma data.
 library(Seurat)
 library(scater)
 library(readxl)
+library(dplyr)
 library(stringr)
 library(tidyr)
 library(plyr)
@@ -69,8 +70,13 @@ RidgePlot(Patient_Sarcoma_data, features = 'nFeature_RNA', group.by = 'lab_id')+
 RidgePlot(Patient_Sarcoma_data, features = 'percent.mt', group.by = 'lab_id')
 Patient_Sarcoma_data
 ```
-#filter out low quality cells
 
+```{r}
+Patient_Sarcoma_data <- readRDS('/Volumes/ludwig_lab/NeoGenes/RDS/Patient_Sarcoma_dataoriginal.rds')
+```
+
+
+#filter out low quality cells
 ```{r}
 Patient_Sarcoma_data_filtered <- subset(Patient_Sarcoma_data, 
                                         subset = 
@@ -84,8 +90,12 @@ Patient_Sarcoma_data_filtered
 saveRDS(Patient_Sarcoma_data, '/Volumes/ludwig_lab/NeoGenes/RDS/Patient_Sarcoma_dataoriginal.rds')
 ```
 
-#normalize
+#Processing (including CDS)
+```{r}
+Patient_Sarcoma_data <- readRDS('/Volumes/ludwig_lab/NeoGenes/RDS/Patient_Sarcoma_dataoriginal.rds')
+```
 
+##normalize
 ```{r}
 Patient_Sarcoma_data_filtered <- Patient_Sarcoma_data_filtered %>%
   NormalizeData() %>%
@@ -95,38 +105,184 @@ Patient_Sarcoma_data_filtered <- Patient_Sarcoma_data_filtered %>%
 
 ElbowPlot(Patient_Sarcoma_data_filtered)
 ```
-
+##UMAP
 ```{r}
 Patient_Sarcoma_data_filtered <- RunUMAP(Patient_Sarcoma_data_filtered, dims = 1:15)
 ```
-
+## Lab ID
 ```{r}
 Patient_Sarcoma_data_filtered@active.ident <- factor(Patient_Sarcoma_data_filtered$lab_id)
 DimPlot(Patient_Sarcoma_data_filtered, group.by = 'lab_id', label = T)
 ```
 
+## Genes
 ```{r}
 FeaturePlot(Patient_Sarcoma_data_filtered, features = 'COL1A1')
 FeaturePlot(Patient_Sarcoma_data_filtered, features = 'ETV1')
 FeaturePlot(Patient_Sarcoma_data_filtered, features = 'ST6GALNAC5')
 FeaturePlot(Patient_Sarcoma_data_filtered, features = 'CD163')
+FeaturePlot(Patient_Sarcoma_data_filtered, features = 'PECAM1')
+FeaturePlot(Patient_Sarcoma_data_filtered, features = 'CD8A')
 ```
-
+## Find Neighbors
 ```{r}
 Patient_Sarcoma_data_filtered <-  FindNeighbors(Patient_Sarcoma_data_filtered , dims=1:15) 
 Patient_Sarcoma_data_filtered <- FindClusters(Patient_Sarcoma_data_filtered,res = 1 )
 ```
+## Labeling Cells
+```{r}
+Patient_Sarcoma_data_filtered$anno <- Patient_Sarcoma_data_filtered$seurat_clusters
+levels(Patient_Sarcoma_data_filtered$anno)[levels(Patient_Sarcoma_data_filtered$anno) %in% c(16)] <- 'Skeletal Muscle'
+levels(Patient_Sarcoma_data_filtered$anno)[levels(Patient_Sarcoma_data_filtered$anno) %in% c(15,24,20)] <- 'Fibroblasts'
+levels(Patient_Sarcoma_data_filtered$anno)[levels(Patient_Sarcoma_data_filtered$anno) %in% c(19, 23)] <- 'Immune Cells'
 
+levels(Patient_Sarcoma_data_filtered$anno)[levels(Patient_Sarcoma_data_filtered$anno) %in% c(22)] <- 'Endothelial Cells'
+
+levels(Patient_Sarcoma_data_filtered$anno)[levels(Patient_Sarcoma_data_filtered$anno) %in% c(10)] <- 'CDS-1'
+
+levels(Patient_Sarcoma_data_filtered$anno)[levels(Patient_Sarcoma_data_filtered$anno) %in% c(1, 11,3, 8,12,13)] <- 'DSRCT-4'
+
+levels(Patient_Sarcoma_data_filtered$anno)[levels(Patient_Sarcoma_data_filtered$anno) %in% c(2,4,7,9,18,14,17)] <- 'DSRCT-2'
+
+levels(Patient_Sarcoma_data_filtered$anno)[levels(Patient_Sarcoma_data_filtered$anno) %in% c(21,0,5,6)] <- 'DSRCT-1'
+```
+
+
+
+##View UMAPs
 ```{r}
 DimPlot(Patient_Sarcoma_data_filtered, label = T)
+DimPlot(Patient_Sarcoma_data_filtered, group.by = 'anno', label = T)
 DimPlot(Patient_Sarcoma_data_filtered, group.by = 'lab_id', label = T)
 ```
+```{r, fig.width=10}
+classical_genes <- list(DSRCT = c( 'GAL', 'ST6GALNAC5', 
+                                  'CACNA2D2' , 'KRT8', 'DES', 'NCAM1'),
+                        CDS = c('ETV1', 'ETV4'),
+                        Fibroblasts = c('COL1A1', 'COL1A2', 'FN1'),
+                        'Skeletal\nmuscle' = c('TTN', 'MYH3', 'NEB'),
+                        'Immune\ncells' = c('PTPRC', 'CD4', 'CD86'),
+                        'Endothelial\ncells' = c('VWF', 'PECAM1','CDH5')
+                        )
+
+
+gene_dot_plot <-
+  DotPlot(Patient_Sarcoma_data_filtered,
+          features = classical_genes,
+          group.by = 'anno') + theme(axis.text.x = element_text(
+            angle = 45,
+            hjust = 1,
+            size = 10
+          ),
+          strip.text = element_text(size = 7.5)) + labs(x = '', y = '') + scale_color_viridis_c()
+gene_dot_plot
+```
+###Figure
+```{r, fig.width=8, fig.height=6}
+anno_umap <- DimPlot(Patient_Sarcoma_data_filtered, group.by = 'anno', label = T, repel = T) + ggtitle('') + theme(axis.text = element_blank())
+
+tiff('../Figures/UO1_DSRCT_CDS_UMAP.tiff', width = 8, height = 6, res = 300, units = 'in')
+plot_grid(anno_umap, gene_dot_plot, labels = 'AUTO', nrow = 2)
+dev.off()
+```
+
+
+##Gene signatures
+```{r}
+gene_sigs <- read.delim("../gene_signatures.txt")
+gene_sigs <- as.list(gene_sigs)
+gene_sigs <- gene_sigs[c("EWS.FLI1" ,"EWS.WT1" ,"CIC.DUX4")]
+gene_sigs <- lapply(gene_sigs, function(x) gsub(" ", "", x))
+
+signature_names <- names(gene_sigs)
+
+#generate a rename vector to easily rename each of the signatures
+rename_vector <- setNames( paste0('Cluster', 1:length(signature_names)), paste0(signature_names, '_Signature'))
+
+#use AddModuleScore to assess the signature expression in each library
+Patient_Sarcoma_data_filtered <- AddModuleScore(Patient_Sarcoma_data_filtered, features = gene_sigs, name = 'Cluster', ctrl = 50)
+#DSRCT_multiome@meta.data <- DSRCT_multiome@meta.data %>% dplyr::select(-c(names(rename_vector)))
+Patient_Sarcoma_data_filtered@meta.data <- Patient_Sarcoma_data_filtered@meta.data %>% dplyr::rename(rename_vector)
+```
+
+```{r}
+
+FeaturePlot(Patient_Sarcoma_data_filtered,features = 'CIC-NG6', order = T)
+FeaturePlot(Patient_Sarcoma_data_filtered,features = names(rename_vector))
+
+VlnPlot(Patient_Sarcoma_data_filtered, group.by = 'anno',features = names(rename_vector)[2:3], combine = F)
+```
+
+```{r}
+signature_vln_plot_list <- VlnPlot(Patient_Sarcoma_data_filtered, group.by = 'anno',features = names(rename_vector)[2:3], combine = F)
+
+signature_vln_plot_list <- lapply(signature_vln_plot_list, function(x) x + theme(legend.position = 'none',
+                                                                                 axis.title.x = element_blank()))
+
+signature_vln_plot_list[[1]] <- signature_vln_plot_list[[1]]  + ggtitle('EWS::WT1 Score')
+signature_vln_plot_list[[2]]  <- signature_vln_plot_list[[2]] + ggtitle('CIC::DUX4 Score')
+```
+
+```{r, fig.width=10, fig.height=4}
+cic_ng <- rownames(Patient_Sarcoma_data_filtered)[grep('CIC-', rownames(Patient_Sarcoma_data_filtered))]
+cic_ng_dp <- DotPlot(Patient_Sarcoma_data_filtered, features = cic_ng, group.by = 'anno') + theme(axis.text.x = element_text(
+  angle = 45,
+  hjust = 1,
+  size = 10
+), legend.title = element_text(size = 10), legend.text = element_text(size = 10)) + labs(x = '', y = '') + scale_color_viridis_c()
+cic_ng_dp
+```
+
+
+```{r, fig.width=10, fig.height=4}
+dsrct_ng <- rownames(Patient_Sarcoma_data_filtered)[grep('DSRCT', rownames(Patient_Sarcoma_data_filtered))]
+dsrct_ng_dp <- DotPlot(Patient_Sarcoma_data_filtered, features = dsrct_ng, group.by = 'anno') + theme(axis.text.x = element_text(
+  angle = 45,
+  hjust = 1,
+  size = 7.5
+), legend.title = element_text(size = 10), legend.text = element_text(size = 10)) + labs(x = '', y = '') + scale_color_viridis_c() + labs(x='',y ='') + scale_color_viridis_c()
+dsrct_ng_dp
+```
+###Figure
+```{r, fig.width=8, fig.height=6}
+top <- plot_grid(plotlist = signature_vln_plot_list, nrow = 1, labels = 'AUTO')
+
+tiff('../Figures/UO1_DSRCT_CDS_signature.tiff', width = 8, height = 10, res = 300, units = 'in')
+plot_grid(top, dsrct_ng_dp, cic_ng_dp, labels = c('', 'C', 'D'), nrow = 3, rel_heights = c(1, 0.8,0.8))
+dev.off()
+```
+
+
+## DEGs
 ```{r}
 Patient_Clusters_DEGs <- FindAllMarkers(Patient_Sarcoma_data_filtered, only.pos = T, test.use = 'LR', return.thresh = 0.05, max.cells.per.ident = 1000)
 ```
+```{r}
+saveRDS(Patient_Clusters_DEGs, '../RDS/2023-11-8 Patient_Clusters_DEGs.rds')
+```
+
+
 
 ```{r}
 top_Patient_Clusters_DEGs <- Patient_Clusters_DEGs %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+```
+
+#
+```{r}
+cic_ng <- rownames(Patient_Sarcoma_data_filtered)[grep('CIC-', rownames(Patient_Sarcoma_data_filtered))]
+DotPlot(Patient_Sarcoma_data_filtered, features = cic_ng)
+```
+
+
+
+```{r}
+DotPlot(Patient_Sarcoma_data_filtered, features = c('PTPRC', 'PECAM1', 'COL1A1', 'IL7R', 'CD163', 'CD8A', 'ACTA2', 'MYH3'))
+```
+
+
+#Save Data
+```{r}
+saveRDS(Patient_Sarcoma_data_filtered,'../RDS/2024-01-31_Patient_Sarcoma_data_filtered.rds')
 ```
 
 #Split the data
@@ -153,7 +309,7 @@ Patient_Sarcoma_data_filtered_list <- lapply(Patient_Sarcoma_data_filtered_list,
   RunUMAP(x, dims = 1:15)
 })
 ```
-
+##Clusters
 ```{r}
 Patient_Sarcoma_data_filtered_list <- lapply(Patient_Sarcoma_data_filtered_list, function(x){
   x <-  FindNeighbors(x , dims=1:15) 
@@ -170,7 +326,7 @@ lapply(Patient_Sarcoma_data_filtered_list, function(x)
 lapply(Patient_Sarcoma_data_filtered_list, function(x)
   FeaturePlot(x, 'WT1'))
 ```
-
+##DEGs
 ```{r}
 Patient_Clusters_DEG_list <- lapply(Patient_Sarcoma_data_filtered_list, function(x) FindAllMarkers(x, only.pos = T, test.use = 'LR', return.thresh = 0.05, max.cells.per.ident = 200))
 ```
@@ -182,6 +338,556 @@ saveRDS(Patient_Clusters_DEG_list, '../RDS/2023-05-01-Patient_Clusters_DEG_list.
 ```{r}
 Patient_Clusters_DEG_list_top <- lapply(Patient_Clusters_DEG_list, function(x)
   x %>% group_by(cluster) %>% top_n(10, avg_log2FC))
+```
+
+
+##DotPlots
+```{r, fig.width=6}
+genes <- rownames(PDX_neogenes_filtered)[grep('DSRCT-NG', rownames(PDX_neogenes_filtered))]
+lapply(Patient_Sarcoma_data_filtered_list,function(x) DotPlot(x, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1)))
+```
+
+```{r, fig.width=6}
+genes <- c('DSRCT-NG2', 'PTPRC', 'COL1A1', 'ACTA2', 'PECAM1')
+
+lapply(Patient_Sarcoma_data_filtered_list,function(x) DotPlot(x, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1)))
+```
+
+```{r}
+Patient_Sarcoma_data_filtered_list$`DSRCT-2` <- FindSubCluster(Patient_Sarcoma_data_filtered_list$`DSRCT-2`, 
+                                                               c('11'), 'RNA_snn')
+```
+###DSRCT-2
+```{r}
+genes <- c('DSRCT-NG2', 'PTPRC', 'COL1A1', 'ACTA2', 'PECAM1', 'VWF', 'IL7R')
+
+DotPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-2`, group.by = 'sub.cluster', features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+
+DimPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-2`, group.by = 'sub.cluster', label = T)
+```
+
+
+```{r}
+Patient_Sarcoma_data_filtered_list$`DSRCT-2`$Anno <- Patient_Sarcoma_data_filtered_list$`DSRCT-2`$seurat_clusters
+
+levels(Patient_Sarcoma_data_filtered_list$`DSRCT-2`$Anno) <- paste0(levels(Patient_Sarcoma_data_filtered_list$`DSRCT-2`$Anno),'_',
+                                                                    c(rep('DSRCT',10),
+                                                                      'Fibroblasts',
+                                                                      'Immune Cells'))
+
+                                                                     
+
+Patient_Sarcoma_data_filtered_list$`DSRCT-2`$cell_type <- factor(Patient_Sarcoma_data_filtered_list$`DSRCT-2`$seurat_clusters)
+
+levels(Patient_Sarcoma_data_filtered_list$`DSRCT-2`$cell_type) <-c(rep('DSRCT',10),
+                                                                      'Fibroblasts',
+                                                                      'Immune Cells')
+
+
+DimPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-2`, group.by = 'cell_type', label = T)
+```
+```{r, fig.width=10}
+genes <- rownames(Patient_Sarcoma_data_filtered_list$`DSRCT-2`)[grep('DSRCT-NG', rownames(Patient_Sarcoma_data_filtered_list$`DSRCT-2`))]
+DotPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-2`, features = genes, group.by = 'Anno') + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+###DSRCT-4
+```{r}
+Patient_Sarcoma_data_filtered_list$`DSRCT-4` <- FindSubCluster(Patient_Sarcoma_data_filtered_list$`DSRCT-4`, 
+                                                               c('11'), 'RNA_snn')
+```
+
+```{r}
+genes <- c('DSRCT-NG2', 'PTPRC', 'COL1A1', 'ACTA2', 'PECAM1', 'VWF', 'FAP', 'WT1')
+
+DotPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-4`, group.by = 'sub.cluster', features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r}
+genes <- c('DSRCT-NG2', 'DSRCT-NG6', 'MKI67', 'ZEB1', 'WT1','PDGFRA', 
+           'COL1A1', 'ACTA2', 'PECAM1',  'IL7R',   'CD163', 'CD68', 'VWF')
+
+DotPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-4`, group.by = 'Anno', features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r}
+genes <- rownames(Patient_Sarcoma_data_filtered_list$`DSRCT-4`)[grep('DSRCT-NG', rownames(Patient_Sarcoma_data_filtered_list$`DSRCT-4`))]
+
+DotPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-4`, group.by = 'Anno', features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r}
+Patient_Sarcoma_data_filtered_list$`DSRCT-4`$Anno <- Patient_Sarcoma_data_filtered_list$`DSRCT-4`$seurat_clusters
+
+levels(Patient_Sarcoma_data_filtered_list$`DSRCT-4`$Anno) <- paste0(levels(Patient_Sarcoma_data_filtered_list$`DSRCT-4`$Anno),'_',
+                                                                    c(rep('DSRCT',11),
+                                                                      'Fibroblasts', #Mesothelial Cells
+                                                                      'Immune Cells', #Myeloid Cells
+                                                                      'Immune Cells')) #T-Cells
+
+                                                                     
+
+Patient_Sarcoma_data_filtered_list$`DSRCT-4`$cell_type <- factor(Patient_Sarcoma_data_filtered_list$`DSRCT-4`$seurat_clusters)
+
+levels(Patient_Sarcoma_data_filtered_list$`DSRCT-4`$cell_type) <- c(rep('DSRCT',11),
+                                                                      'Fibroblasts', #Mesothelial Cells
+                                                                      'Immune Cells', #Myeloid Cells
+                                                                      'Immune Cells') #T-Cells
+
+DimPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-4`, group.by = 'cell_type', label = T)
+```
+
+
+###DSRCT-1
+```{r}
+Patient_Sarcoma_data_filtered_list$`DSRCT-1`@active.ident <-factor( Patient_Sarcoma_data_filtered_list$`DSRCT-1`$seurat_clusters)
+Patient_Sarcoma_data_filtered_list$`DSRCT-1` <- FindSubCluster(Patient_Sarcoma_data_filtered_list$`DSRCT-1`, 
+                                                               10, 'RNA_snn', res = 1)
+
+DimPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-1`, group.by = 'sub.cluster', label = T )
+```
+
+```{r}
+genes <- c('DSRCT-NG2', 'PTPRC', 'COL1A1', 'ACTA2', 'PECAM1', 'VWF', 'IL7R', 'CD68')
+
+DotPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-1`, group.by = 'sub.cluster', features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r}
+Patient_Sarcoma_data_filtered_list$`DSRCT-1`@active.ident <-factor( Patient_Sarcoma_data_filtered_list$`DSRCT-1`$sub.cluster)
+
+Patient_Sarcoma_data_filtered_list$`DSRCT-1`$Anno <- factor(Patient_Sarcoma_data_filtered_list$`DSRCT-1`$sub.cluster)
+
+
+
+levels(Patient_Sarcoma_data_filtered_list$`DSRCT-1`$Anno) <- paste0(levels(Patient_Sarcoma_data_filtered_list$`DSRCT-1`$Anno),'_',
+                                                                    c(rep('DSRCT',2),
+                                                                      'Fibroblasts',
+                                                                      'Neuronal', 
+                                                                      'Immune Cells',
+                                                                      rep('DSRCT',8)))
+
+Patient_Sarcoma_data_filtered_list$`DSRCT-1`$cell_type <- factor(Patient_Sarcoma_data_filtered_list$`DSRCT-1`$sub.cluster)
+
+levels(Patient_Sarcoma_data_filtered_list$`DSRCT-1`$cell_type) <-  c(rep('DSRCT',2),
+                                                                      'Fibroblasts',
+                                                                      'Immune Cells', 
+                                                                      'Neuronal Cells',
+                                                                      rep('DSRCT',8))
+
+DimPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-1`, group.by = 'cell_type', label = T)
+```
+
+```{r}
+Patient_Sarcoma_data_filtered_list$`DSRCT-1`@active.ident <- factor(Patient_Sarcoma_data_filtered_list$`DSRCT-1`$cell_type)
+DSRCT_1_DEGs <- FindAllMarkers(Patient_Sarcoma_data_filtered_list$`DSRCT-1`, group.by = 'cell_type',
+                               only.pos = T, test.use = 'LR', return.thresh = 0.05, max.cells.per.ident = 200)
+```
+
+
+```{r}
+FeaturePlot(Patient_Sarcoma_data_filtered_list$`DSRCT-1`, features = 'NEUROD1')
+```
+```{r}
+Patient_Sarcoma_data_filtered_list$`DSRCT-4`$Anno <- Patient_Sarcoma_data_filtered_list$`DSRCT-1`$seurat_clusters
+
+levels(Patient_Sarcoma_data_filtered_list$`DSRCT-4`$Anno) <- paste0(levels(Patient_Sarcoma_data_filtered_list$`DSRCT-4`$Anno),'_',
+                                                                    c(rep('DSRCT',11),
+                                                                      'Mesothelial Cells',
+                                                                      'Myeloid Cells',
+                                                                      'T-Cells'))
+
+DimPlot(Patient_Sarcoma_data_filtered_list$`DSRCT-4`, group.by = 'Anno', label = T)
+```
+
+```{r}
+lapply(Patient_Sarcoma_data_filtered_list[1:3], function(x) DimPlot(x, group.by = 'Anno', label = T))
+```
+
+#Extracting DSRCT data from PDX and patients 
+Patient data will be exclusively from nuclei data
+```{r}
+DSRCT_only_cells <- lapply(Patient_Sarcoma_data_filtered_list[1:3], function(x) x[,x$cell_type == 'DSRCT'] )
+DSRCT_only_cells_dataset <- merge(DSRCT_only_cells[[1]], DSRCT_only_cells[2:3])
+DSRCT_only_cells_dataset$source = 'Patient'
+```
+
+```{r}
+DSRCT_PDX_cells_dataset <- PDX_neogenes_filtered[,PDX_neogenes_filtered$lab_id %in% c('DSRCT-1', 'DSRCT-2', 'DSRCT-4')]
+
+DSRCT_PDX_cells_dataset$source = 'PDX'
+```
+
+```{r}
+DSRCT_dataset <- merge(DSRCT_only_cells_dataset, DSRCT_PDX_cells_dataset)
+```
+
+```{r}
+DSRCT_dataset$library <- paste0(DSRCT_dataset$lab_id, '_', DSRCT_dataset$source)
+DSRCT_dataset@active.ident <- factor(DSRCT_dataset$library)
+```
+
+```{r, fig.width=10}
+genes <- rownames(DSRCT_dataset)[grep('DSRCT-NG', rownames(DSRCT_dataset))]
+DotPlot(DSRCT_dataset, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r}
+DSRCT_dataset_avg <- AverageExpression(DSRCT_dataset)
+```
+
+```{r}
+genes <- rownames(DSRCT_dataset)[grep('-NG', rownames(DSRCT_dataset))]
+mat <- DSRCT_dataset_avg$RNA[genes,]
+pheatmap::pheatmap(cor(mat))
+```
+
+```{r}
+require(ggrepel)
+pca <- prcomp(t(mat))
+pca_df <- data.frame(PC_1 = pca$x[,1], PC_2 = pca$x[,2], labels = rownames(pca$x))
+
+ggplot(pca_df, aes(x = PC_1, y = PC_2, label = labels)) + 
+  geom_text_repel() + 
+  labs(x= paste0('PC_1 ', '(',round(pca$sdev[1],2), '%)'),
+       y= paste0('PC_2 ', '(',round(pca$sdev[2],2), '%)'))
+```
+
+
+
+#Processing (excluding CDS)
+```{r}
+Patient_Sarcoma_data <- readRDS('/Volumes/ludwig_lab/NeoGenes/RDS/Patient_Sarcoma_dataoriginal.rds')
+Patient_Sarcoma_data <- Patient_Sarcoma_data[,grep('DSRCT', Patient_Sarcoma_data$lab_id)]
+```
+
+##filter out low quality cells
+```{r}
+Patient_Sarcoma_data_filtered <- subset(Patient_Sarcoma_data, 
+                                        subset = 
+                                  percent.mt < 10 & nCount_RNA > 1000 & nFeature_RNA > 500)
+Patient_Sarcoma_data
+Patient_Sarcoma_data_filtered
+```
+
+##normalize
+```{r}
+Patient_Sarcoma_data_filtered <- Patient_Sarcoma_data_filtered %>%
+  NormalizeData() %>%
+  FindVariableFeatures() %>%
+  ScaleData() %>%
+  RunPCA()
+
+ElbowPlot(Patient_Sarcoma_data_filtered)
+```
+
+##UMAP
+```{r}
+Patient_Sarcoma_data_filtered <- RunUMAP(Patient_Sarcoma_data_filtered, dims = 1:50)
+```
+## Lab ID
+```{r}
+Patient_Sarcoma_data_filtered@active.ident <- factor(Patient_Sarcoma_data_filtered$lab_id)
+DimPlot(Patient_Sarcoma_data_filtered, group.by = 'lab_id', label = T)
+```
+
+## Find Neighbors
+```{r}
+Patient_Sarcoma_data_filtered <-  FindNeighbors(Patient_Sarcoma_data_filtered , dims=1:50) 
+Patient_Sarcoma_data_filtered <- FindClusters(Patient_Sarcoma_data_filtered,res = 0.3)
+DimPlot(Patient_Sarcoma_data_filtered, label = T, group.by = 'seurat_clusters')
+FeaturePlot(Patient_Sarcoma_data_filtered, 'DSRCT-NG13')
+```
+```{r}
+Patient_Sarcoma_data_filtered$anno <- Patient_Sarcoma_data_filtered$seurat_clusters
+levels(Patient_Sarcoma_data_filtered$anno) <- c('DSRCT-1', 'DSRCT-2', 'DSRCT-4', 'DSRCT-4' ,'DSRCT-2', 'DSRCT-4', 'DSRCT-4', 'DSRCT-4', 'DSRCT-2',
+                                                '9', '10', 'DSRCT-1', 'DSRCT-4', 'DSRCT-2')
+DimPlot(Patient_Sarcoma_data_filtered, label = T, group.by = 'anno')
+```
+
+
+## DEGs
+```{r}
+Patient_Clusters_DEGs <- FindAllMarkers(Patient_Sarcoma_data_filtered, only.pos = T, test.use = 'LR', return.thresh = 0.05, max.cells.per.ident = 500)
+```
+
+```{r}
+Patient_Sarcoma_data_filtered_subset <- subset(Patient_Sarcoma_data_filtered, subset = seurat_clusters %in% c('9','10'))
+```
+
+```{r}
+Patient_Sarcoma_data_filtered_subset <- FindNeighbors(Patient_Sarcoma_data_filtered_subset, dims = 1:50)
+Patient_Sarcoma_data_filtered_subset <- FindClusters(Patient_Sarcoma_data_filtered_subset)
+```
+
+```{r}
+Patient_Sarcoma_data_filtered_subset_Clusters_DEGs <- FindAllMarkers(Patient_Sarcoma_data_filtered_subset, only.pos = T, test.use = 'LR', return.thresh = 0.05, max.cells.per.ident = 500)
+```
+
+```{r}
+DimPlot(Patient_Sarcoma_data_filtered_subset, label = T)
+```
+```{r}
+Patient_Sarcoma_data_filtered_subset$anno <- Patient_Sarcoma_data_filtered_subset$seurat_clusters
+levels(Patient_Sarcoma_data_filtered_subset$anno) <- c('Fibroblasts', 'Fibroblasts', 'T-cells', 
+                                                       'Endothelial cells', 'Myeloid cells', 'Myeloid cells',
+                                                       'Fibroblasts', 'DSRCT-2', 'Myeloid cells')
+```
+
+
+
+
+```{r}
+Patient_Sarcoma_data_filtered$anno <- Patient_Sarcoma_data_filtered$seurat_clusters
+levels(Patient_Sarcoma_data_filtered$anno) <- c('DSRCT-1', 'DSRCT-2', 'DSRCT-4', 'DSRCT-4' ,'DSRCT-2', 'DSRCT-4', 'DSRCT-4', 'DSRCT-4', 'DSRCT-2',
+                                                '9', '10', 'DSRCT-1', 'DSRCT-4', 'DSRCT-2')
+
+Patient_Sarcoma_data_filtered$anno <- as.character(Patient_Sarcoma_data_filtered$anno)
+Patient_Sarcoma_data_filtered@meta.data[colnames(Patient_Sarcoma_data_filtered_subset),'anno'] <- as.character(Patient_Sarcoma_data_filtered_subset$anno)
+Patient_Sarcoma_data_filtered$anno <- as.factor(Patient_Sarcoma_data_filtered$anno)
+
+DimPlot(Patient_Sarcoma_data_filtered, label = T, repel = T, group.by = 'anno')
+```
+
+```{r}
+colors <- as.character(paletteer_dynamic("cartography::multi.pal", length(unique(Patient_Sarcoma_data_filtered$anno))))
+cell_type_colors <- setNames(colors,levels(Patient_Sarcoma_data_filtered$anno))
+```
+
+
+##Figure
+```{r, fig.width=8}
+classical_genes <- list(DSRCT = c( 'GAL', 'ST6GALNAC5', 
+                                  'CACNA2D2' , 'KRT8', 'DES', 'NCAM1'),
+                         'Endothelial\ncells' = c('VWF', 'CDH5'),
+                        Fibroblasts = c('COL1A1', 'COL1A2', 'FN1'),
+                        'Myeloid\ncells' = c( 'CD163', 'CD86','PTPRC'),
+                        'T-cells' = c( 'IL7R','CD3E', 'CD8A')
+                       )
+gene_dot_plot <-
+  DotPlot(Patient_Sarcoma_data_filtered,
+          features = classical_genes, group.by = 'anno') + theme(axis.text.x = element_text(
+            angle = 45,
+            hjust = 1,
+            size = 10
+          ),
+          legend.title  = element_text(size = 10),
+          legend.text = element_text(size = 10),
+          strip.text = element_text(size = 7)) + labs(x = '', y = '') + scale_color_viridis_c()
+gene_dot_plot
+```
+
+```{r, fig.width=8, fig.height=6}
+anno_umap <- DimPlot(Patient_Sarcoma_data_filtered, group.by = 'anno', label = T, repel = T) + ggtitle('') + theme(axis.text = element_blank()) + scale_color_manual(values = cell_type_colors)
+```
+
+##Gene signatures
+```{r}
+gene_sigs <- read.delim("../gene_signatures.txt")
+gene_sigs <- as.list(gene_sigs)
+gene_sigs <- gene_sigs[c("EWS.FLI1" ,"EWS.WT1", '')]
+gene_sigs <- lapply(gene_sigs, function(x) gsub(" ", "", x))
+
+signature_names <- names(gene_sigs)
+
+#generate a rename vector to easily rename each of the signatures
+rename_vector <- setNames( paste0('Cluster', 1:length(signature_names)), paste0(signature_names, '_Signature'))
+
+#use AddModuleScore to assess the signature expression in each library
+Patient_Sarcoma_data_filtered <- AddModuleScore(Patient_Sarcoma_data_filtered, features = gene_sigs, name = 'Cluster', ctrl = 50)
+#DSRCT_multiome@meta.data <- DSRCT_multiome@meta.data %>% dplyr::select(-c(names(rename_vector)))
+Patient_Sarcoma_data_filtered@meta.data <- Patient_Sarcoma_data_filtered@meta.data %>% dplyr::rename(rename_vector)
+```
+
+```{r}
+signature_vln_plot_list <- VlnPlot(Patient_Sarcoma_data_filtered, group.by = 'anno',features = names(rename_vector)[2:1], combine = F)
+
+signature_vln_plot_list <- lapply(signature_vln_plot_list, function(x) x + 
+                                    theme(legend.position = 'none', axis.title.x = element_blank()) +
+                                    scale_fill_manual(values = cell_type_colors))
+
+signature_vln_plot_list[[1]] <- signature_vln_plot_list[[1]]  + ggtitle('EWS::WT1 Score')+ ylim(-0.2,0.4)
+signature_vln_plot_list[[2]]  <- signature_vln_plot_list[[2]] + ggtitle('EWS::FLI1 Score') + ylim(-0.2,0.4)
+signature_vln_plot_list
+```
+
+```{r, fig.width=10, fig.height=4}
+dsrct_ng <- rownames(Patient_Sarcoma_data_filtered)[grep('DSRCT', rownames(Patient_Sarcoma_data_filtered))]
+dsrct_ng_dp <- DotPlot(Patient_Sarcoma_data_filtered, features = dsrct_ng, group.by = 'anno') + theme(axis.text.x = element_text(
+  angle = 45,
+  hjust = 1,
+  size = 7.5
+), legend.title = element_text(size = 10), legend.text = element_text(size = 10)) + labs(x = '', y = '') + scale_color_viridis_c() + labs(x='',y ='') + scale_color_viridis_c()
+dsrct_ng_dp
+```
+
+```{r}
+DotPlot(Patient_Sarcoma_data_filtered, features = dsrct_ng, group.by = 'seurat_clusters', cluster.idents = T) + theme(axis.text.x = element_text(
+  angle = 45,
+  hjust = 1,
+  size = 7.5
+), legend.title = element_text(size = 10), legend.text = element_text(size = 10)) + labs(x = '', y = '') + scale_color_viridis_c() + labs(x='',y ='') + scale_color_viridis_c()
+```
+
+
+##SFA Figure
+```{r, fig.width=8, fig.height=6}
+top <- plot_grid(plotlist = signature_vln_plot_list, nrow = 1, labels = 'AUTO')
+
+tiff('../Figures/SFA_DSRCT_UMAP.tiff', width = 8, height = 6, res = 300, units = 'in')
+plot_grid(anno_umap, gene_dot_plot, labels = 'AUTO', nrow = 2)
+dev.off()
+
+tiff('../Figures/SFA_DSRCT_CDS_signature.tiff', width = 8, height = 6, res = 300, units = 'in')
+plot_grid(top, dsrct_ng_dp, labels = c('', 'C'), nrow = 2, rel_heights = c(1, 0.8))
+dev.off()
+```
+
+##Manuscript Figure
+```{r, fig.width=8, fig.height=6}
+vln_plots <- plot_grid(plotlist = signature_vln_plot_list, nrow = 1)
+top <- plot_grid(anno_umap, vln_plots, labels = c('C', 'D'), nrow = 1)
+bot <- plot_grid(gene_dot_plot,  dsrct_ng_dp,  labels = c('E', 'F'), nrow = 2, axis = 'tblr', align = 'hv')
+tiff('../Figures/Neogenes_DSRCT_Figure_1.tiff', width = 10, height = 10, res = 300, units = 'in')
+plot_grid(top, bot, nrow = 2, rel_heights = c(1,2))
+dev.off()
+```
+
+#Heatmap
+```{r}
+require(ComplexHeatmap)
+```
+##Set up neogenes
+```{r}
+require(scales)
+NG_feature_list <- 
+  list(
+    DSRCT_NGs = rownames(Patient_Sarcoma_data_filtered)[grep('DSRCT-NG', rownames(Patient_Sarcoma_data_filtered))], 
+    ES_NGs = rownames(Patient_Sarcoma_data_filtered)[grep('Ew-NG', rownames(Patient_Sarcoma_data_filtered))], 
+    aRMS_NGs = rownames(Patient_Sarcoma_data_filtered)[grep('aRMS-NG', rownames(Patient_Sarcoma_data_filtered))]
+    #CDS_NGs = rownames(Patient_Sarcoma_data_filtered)[grep('CIC-NG', rownames(Patient_Sarcoma_data_filtered))]
+  )
+
+NG_feature_list <- lapply(NG_feature_list, function(x) {data.frame(gene = x)})
+NG_features <- do.call(rbind, NG_feature_list) #used for rowsplitting
+NG_features$group <- sapply(strsplit(rownames(NG_features), '[.]'), '[[', 1)
+rownames(NG_features) <- NG_features$gene
+#reordering the feature groups
+NG_features$group <- factor(NG_features$group, names(NG_feature_list))
+
+#ensuring that genes are found in gene matrix
+genes <- intersect(unlist(NG_feature_list), rownames(Patient_Sarcoma_data_filtered))
+
+NG_features <- NG_features[genes,]
+```
+
+##Acquire Data Matrix
+```{r}
+Patient_Sarcoma_data_filtered@active.ident <- Patient_Sarcoma_data_filtered$anno
+Patient_Sarcoma_data_filtered_subset <- subset(Patient_Sarcoma_data_filtered, subset = anno %in% c('DSRCT-1', 'DSRCT-2', 'DSRCT-4'),downsample = 2000)
+```
+
+```{r}
+mat <- as.matrix(Patient_Sarcoma_data_filtered_subset@assays$RNA@data[NG_features$gene,])
+#mat_scaled <- apply(mat, 1, function(x) rescale(x, c(0,1))) %>% t()
+```
+
+##Set up Colors
+```{r}
+require(paletteer)
+cluster_type_colors <- cell_type_colors[1:3]
+
+colors <- as.character(paletteer_dynamic("cartography::pastel.pal", length((names(NG_feature_list)))))
+NG_type_colors <- setNames( colors,names(NG_feature_list))
+
+annotation_color <- list(anno = cluster_type_colors,
+                         group = NG_type_colors)
+```
+
+## Create heatmap
+```{r}
+#color function for the scale
+f1 = colorRamp2(c(0, 6),
+                c("white", "darkblue"),
+                transparency = 0,
+                space = "LAB")
+
+ha_1 = HeatmapAnnotation(
+  df =  Patient_Sarcoma_data_filtered_subset@meta.data[, 'anno', drop = FALSE],
+  col = annotation_color,
+  annotation_label = 'Annotation',
+  annotation_name_gp = gpar(fontsize = 12),
+  border = TRUE,
+  show_legend = F,
+  simple_anno_size  = unit(0.35, 'cm'),
+  annotation_legend_param = list(anno = list(
+    ncol = 1, title_position = "topleft"
+  ))
+)
+
+ra_1 = rowAnnotation(
+  df =  NG_features[, 'group', drop = FALSE],
+  col = annotation_color,
+  annotation_label = 'Neogenes',
+  annotation_name_gp = gpar(fontsize = 12),
+  border = TRUE,
+  show_legend = F,
+  simple_anno_size  = unit(0.35, 'cm'),
+  annotation_legend_param = list(group = list(
+    nrow = 1, title_position = "topleft"
+  ))
+)
+
+Patient_data_ng_mat_hm <- Heatmap(
+  mat,
+  col = f1,
+  cluster_columns = T,
+  cluster_rows = T,
+  cluster_row_slices = F,
+  top_annotation =  c(ha_1),
+  left_annotation = ra_1,
+  show_row_names = T,
+  show_column_names = F,
+  heatmap_height = unit(8, 'in'),
+  heatmap_width = unit(8, 'in'),
+  column_names_rot = 90,
+  column_title_rot = 0,
+  column_title_gp = gpar(fontsize = 12),
+  column_split = Patient_Sarcoma_data_filtered_subset@meta.data[,'anno', drop = F],
+  row_split = NG_features[,'group', drop = F],
+  row_names_gp = gpar(fontsize = 8),
+  row_title_gp = gpar(fontsize = 12),
+  row_title_side = 'left',
+  row_title_rot = 0,
+  show_heatmap_legend = TRUE,
+  heatmap_legend_param = list(
+    title = 'Log Expression',
+    direction = "vertical",
+    legend_width = unit(3, 'cm')
+  )
+)
+```
+## Draw Heatmap
+```{r, fig.height=10}
+Patient_data_ng_mat_hm_grob <- grid::grid.grabExpr(
+  ComplexHeatmap::draw(
+    Patient_data_ng_mat_hm,
+    merge_legend = T,
+    #annotation_legend_list = list(lgd1),
+    heatmap_legend_side = c("right"),
+    annotation_legend_side = c("right"),
+    align_heatmap_legend = 'heatmap_top'
+  )
+)
+
+plot_grid(Patient_data_ng_mat_hm_grob)
+```
+
+###Make Figure
+```{r}
+tiff('../Figures/Neogenes_Supplemental.tiff', width = 10, height = 10, res = 300, units = 'in')
+plot_grid(Patient_data_ng_mat_hm_grob)
+dev.off()
 ```
 
 

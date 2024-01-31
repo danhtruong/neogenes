@@ -18,7 +18,8 @@ source('../../Utilities/Utilities.r')
 source('../../Utilities/Processing_Utilities.r')
 ```
 
-#importing data from file storage
+#Loading and Processing Data
+##importing data from file storage
 
 Files are stored on my MD Anderson drive. I am extracting the the path to each library and generating some meta data.
 ```{r}
@@ -28,7 +29,7 @@ list_of_files <- list_of_files[-c(1,2,3,5,7,10,12),]
 ```
 
 
-#converting from H5 to seurat objects
+##converting from H5 to seurat objects
 ```{r}
 PDX_neogenes.list.h5 <- lapply(list_of_files$h5, Read10X_h5)
 names(PDX_neogenes.list.h5) <- list_of_files$library_id
@@ -44,7 +45,7 @@ for(i in 1:length(PDX_neogenes.list)) {
 PDX_neogenes <- Reduce(merge, PDX_neogenes.list)
 ```
 
-#adding the metadata
+##adding the metadata
 ```{r}
 PDX_neogenes <- PercentageFeatureSet( PDX_neogenes, pattern = "^MT-", col.name = "percent.mt", assay = 'RNA')
 
@@ -70,7 +71,7 @@ PDX_neogenes@meta.data %>% group_by(orig.ident, lab_id) %>% summarise(n=n())
 
 
 
-#quality control
+##quality control
 ```{r}
 RidgePlot(PDX_neogenes, features = 'nCount_RNA', group.by = 'lab_id')
 RidgePlot(PDX_neogenes, features = 'nFeature_RNA', group.by = 'lab_id')
@@ -79,7 +80,7 @@ PDX_neogenes
 ```
 
 
-#Outlier
+##Outlier
 Based on OSCA
 
 ```{r}
@@ -110,13 +111,13 @@ counts.plot + scale_y_log10()
 gene.plot + scale_y_log10()
 ```
 
-#save original data
+##save original data
 ```{r}
 saveRDS(PDX_neogenes, '/Volumes/ludwig_lab/NeoGenes/RDS/PDX_neogenes_original.rds')
 ```
 
-
-#filter out low quality cells
+#Processed data
+##filter out low quality cells
 
 ```{r}
 PDX_neogenes <- AddMetaData(PDX_neogenes, discard.counts, col.name = 'discard.counts') 
@@ -133,7 +134,7 @@ PDX_neogenes_filtered <- subset(PDX_neogenes, subset = discard.features == FALSE
 VlnPlot(PDX_neogenes, features = 'WT1')
 ```
 
-#quality control
+##quality control
 ```{r}
 RidgePlot(PDX_neogenes_filtered, features = 'nCount_RNA', group.by = 'lab_id')
 RidgePlot(PDX_neogenes_filtered, features = 'nFeature_RNA', group.by = 'lab_id')
@@ -141,7 +142,7 @@ RidgePlot(PDX_neogenes_filtered, features = 'percent.mt', group.by = 'lab_id')
 PDX_neogenes_filtered
 ```
 
-#normalize
+##normalize
 
 ```{r}
 PDX_neogenes_filtered <- PDX_neogenes_filtered %>%
@@ -162,6 +163,10 @@ PDX_neogenes_filtered <- RunUMAP(PDX_neogenes_filtered, dims = 1:15)
 saveRDS(PDX_neogenes_filtered, '/Volumes/ludwig_lab/NeoGenes/RDS/2023-05-1 PDX_neogenes_filtered.rds')
 ```
 
+#Load Processed Data
+```{r}
+PDX_neogenes_filtered <- readRDS( '/Volumes/ludwig_lab/NeoGenes/RDS/2023-05-1 PDX_neogenes_filtered.rds')
+```
 
 ```{r}
 PDX_neogenes_filtered@active.ident <- factor(PDX_neogenes_filtered$lab_id)
@@ -199,10 +204,267 @@ VlnPlot(PDX_neogenes_filtered, features = 'Ew-NG8') + NoLegend()
 
 FeaturePlot(PDX_neogenes_filtered, 'AR_Signature')
 ```
+
+#Neogene analysis
+Use grep to pull DSRCT-neogenes from the gene list and observe DSRCT-neogene expression
+```{r, fig.width=10, fig.height=4}
+dsrct_ng <- rownames(PDX_neogenes_filtered)[grep('DSRCT', rownames(PDX_neogenes_filtered))]
+DotPlot(PDX_neogenes_filtered, features = dsrct_ng, group.by = 'lab_id') + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10)) + labs(x='',y ='')
+```
+
 ```{r, fig.width=6}
 genes <- rownames(PDX_neogenes_filtered)[grep('DSRCT-NG', rownames(PDX_neogenes_filtered))]
 DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
 ```
+
+
+
+Generate a DSRCT_neoegene signature
+```{r}
+genes <- rownames(PDX_neogenes_filtered)[grep('DSRCT-NG', rownames(PDX_neogenes_filtered))]
+
+#use AddModuleScore to assess the signature expression in each library
+PDX_neogenes_filtered <- AddModuleScore(PDX_neogenes_filtered, features = list(genes), name = 'Cluster', ctrl = 50)
+PDX_neogenes_filtered@meta.data <- PDX_neogenes_filtered@meta.data %>% dplyr::rename('DSRCT_NG' = 'Cluster1')
+```
+
+Compare the DSRCT_neogene signature to the EWS.WT1_signature
+```{r}
+VlnPlot(PDX_neogenes_filtered, 'DSRCT_NG') + NoLegend()
+VlnPlot(PDX_neogenes_filtered, 'EWS.WT1_Signature') + NoLegend()
+```
+
+#Heatmap
+
+
+
+##Perform correlation
+Find genes that correlate with neogenes
+```{r}
+cells <- grep('DSRCT',PDX_neogenes_filtered$lab_id)
+DSRCT_NG_cor_vector <- apply(PDX_neogenes_filtered@assays$RNA@data[,cells],
+                    1, function(x) cor(x,PDX_neogenes_filtered$DSRCT_NG[cells]))
+DSRCT_NG_cor_vector_df <- data.frame(r2=DSRCT_NG_cor_vector, genes = names(DSRCT_NG_cor_vector))
+```
+
+```{r, fig.width=10}
+genes <- DSRCT_NG_cor_vector_all_df %>% top_n(30, r2) %>% pull(genes)
+DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+
+```{r, fig.width=10}
+genes <- DSRCT_NG_cor_vector_all_df[-grep('DSRCT', DSRCT_NG_cor_vector_all_df$genes),] %>% top_n(30, r2) %>% pull(genes)
+DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+
+```{r}
+DSRCT_NG_cor_vector_all <- apply(PDX_neogenes_filtered@assays$RNA@data[,],
+                    1, function(x) cor(x,PDX_neogenes_filtered$DSRCT_NG[]))
+DSRCT_NG_cor_vector_all_df <- data.frame(r2=DSRCT_NG_cor_vector_all, genes = names(DSRCT_NG_cor_vector_all))
+```
+
+```{r}
+library(stringi)
+length(stri_remove_empty(gene_sigs$EWS.WT1))
+DSRCT_gene_signature <- DSRCT_NG_cor_vector_all_df[-grep('DSRCT', DSRCT_NG_cor_vector_all_df$genes),] %>% top_n(67, r2) %>% pull(genes)
+```
+
+```{r}
+#use AddModuleScore to assess the signature expression in each library
+PDX_neogenes_filtered <- AddModuleScore(PDX_neogenes_filtered, features = list(DSRCT_gene_signature), name = 'Cluster', ctrl = 50)
+#PDX_neogenes_filtered@meta.data <- PDX_neogenes_filtered@meta.data %>% dplyr::select(-c(names(rename_vector)))
+PDX_neogenes_filtered@meta.data <- PDX_neogenes_filtered@meta.data %>% dplyr::rename('DSRCT_ng_correlates' = 'Cluster1')
+```
+##Compare correlates to EWS.WT1_signature
+```{r}
+VlnPlot(PDX_neogenes_filtered, 'DSRCT_ng_correlates') + NoLegend()
+VlnPlot(PDX_neogenes_filtered, 'EWS.WT1_Signature')+ NoLegend()
+```
+
+
+###split data into testing and training groups and find scores
+```{r}
+set.seed(123)
+split_data <- function(seurat_object, gene_sets){
+  groups <- sample(c("test", "training"), size = dim(seurat_object)[2], replace = TRUE)
+  names(groups) <- colnames(seurat_object)
+  seurat_object <- AddMetaData(object = seurat_object, metadata = groups, col.name = "group")
+  seurat_object@active.assay <- 'RNA'
+  obj.list <- SplitObject(seurat_object, split.by = "group")
+  for (i in 1:length(gene_sets)){
+
+    obj.list <- map(obj.list, 
+                    AddModuleScore,
+                    features = list(gene_sets[[i]]),
+                    name = names(gene_sets)[i])
+  }
+  
+  return(obj.list)
+}
+```
+
+```{r}
+roc_plot <- function(test_df, 
+                     bias_score = 'length_bias_score', 
+                     random_score =  'random_score',
+                     bias_label = 'Length Bias'){
+  require(pROC)
+  # Plot ROC curv
+  roc_bias <- roc(test_df$class, test_df$probabilities_bias)
+  roc_random <- roc(test_df$class, test_df$probabilities_random)
+  auroc <- c(auc(roc_bias)[1],
+             auc(roc_random)[1])
+    
+  
+  roc_ggplot <- ggroc(list(roc_bias,roc_random)) + 
+    labs(x = "False Positive Rate (FPR)", y = "True Positive Rate (TPR)", color = "") +
+    scale_color_manual(values = c("limegreen", "darkgray"), 
+                       labels = c(paste0(bias_label, "\nScore ", '(AUC = ', round(auroc, 2)[1], ')'),
+                                  paste0("Random ", '(AUC = ', round(auroc, 2)[2], ')'))) + 
+    theme_classic() + 
+  theme(legend.position = c(0.7, 0.25),
+        legend.background = element_rect(fill = NA)) 
+  return(roc_ggplot)
+  
+}
+
+```
+
+```{r}
+add_module_scores <- function(seurat_object,
+                              EWS.WT1_score = "",
+                              NG_correlate_score = ""){
+  gene_sets <- list("EWS.WT1_score" = EWS.WT1_score,
+                    "NG_correlate_score" = NG_correlate_score,
+                    "random_score_ng" = sample(rownames(seurat_object), 
+                                              size = length(NG_correlate_score), replace = F),
+                    "random_score_ews_wt1" = sample(rownames(seurat_object), 
+                                              size = length(EWS.WT1_score), replace = F)
+                    )
+  obj.list <- split_data(seurat_object, gene_sets)
+  return(obj.list)
+}
+```
+
+#Length Bias score
+We will divide the library to a training set and a test set. First, let us find the signature in the training set:
+```{r}
+require(purrr)
+obj.list <- add_module_scores(PDX_neogenes_filtered, 
+                              gene_sigs$EWS.WT1,
+                              DSRCT_gene_signature)
+```
+```{r}
+#train model on ES data
+train_df <- data.frame(
+  EWS.WT1_score = obj.list$training$EWS.WT1_score1,
+  random_score = obj.list$training$random_score_ews_wt11,
+  class = factor(ifelse(obj.list$training$sample_type == "DSRCT", 1, 0))
+)
+
+EWS.WT1_logistic_fit <- glm(class ~ EWS.WT1_score, train_df, family = "binomial")
+#summary(logistic_fit)
+
+EWS.WT1_logistic_random <- glm(class ~ random_score, train_df, family = "binomial")
+#summary(logistic_random)
+
+train_df <- data.frame(
+  NG_correlate_score = obj.list$training$NG_correlate_score1,
+  random_score = obj.list$training$random_score_ng1,
+  class = factor(ifelse(obj.list$training$sample_type == "DSRCT", 1, 0))
+)
+
+NG_correlate_logistic_fit <- glm(class ~ NG_correlate_score, train_df, family = "binomial")
+
+NG_correlate_logistic_random <- glm(class ~ random_score, train_df, family = "binomial")
+#summary(logistic_fit)
+```
+
+```{r}
+# Predict probabilities on test set
+test_df <- data.frame(
+  EWS.WT1_score = obj.list$test$EWS.WT1_score1,
+  random_score = obj.list$test$random_score_ews_wt11,
+  class = factor(ifelse(obj.list$test$sample_type == "DSRCT", 1, 0))
+)
+
+test_df$probabilities_bias <- predict(EWS.WT1_logistic_fit, newdata = test_df, type = "response")
+
+test_df$probabilities_random <- predict(EWS.WT1_logistic_random, newdata = test_df, type = "response")
+
+plot(probabilities_bias ~ EWS.WT1_score, data = test_df)
+plot(probabilities_bias ~ random_score, data = test_df)
+
+ggplot(test_df, mapping = aes(y = probabilities_bias, x = EWS.WT1_score)) + geom_point() + theme_classic() + labs(x = 'EWS.WT1_score',y= 'Probability of DSRCT')
+```
+
+```{r}
+EWS.WT1_score_plot <- roc_plot(test_df, 
+                          bias_score = 'EWS.WT1_score',
+                          random_score = 'random_score',
+                          bias_label = 'EWS.WT1_score')
+
+EWS.WT1_score_plot
+```
+```{r}
+# Predict probabilities on test set
+test_df <- data.frame(
+  NG_correlate_score = obj.list$test$NG_correlate_score1,
+  random_score = obj.list$test$random_score_ng1,
+  class = factor(ifelse(obj.list$test$sample_type == "DSRCT", 1, 0))
+)
+
+test_df$probabilities_bias <- predict(NG_correlate_logistic_fit, newdata = test_df, type = "response")
+
+test_df$probabilities_random <- predict(NG_correlate_logistic_random, newdata = test_df, type = "response")
+
+plot(probabilities_bias ~ NG_correlate_score, data = test_df)
+plot(probabilities_bias ~ random_score, data = test_df)
+
+ggplot(test_df, mapping = aes(y = probabilities_bias, x = NG_correlate_score)) + geom_point() + theme_classic() + labs(x = 'EWS.WT1_score',y= 'Probability of DSRCT')
+```
+
+```{r}
+NG_correlate_score_plot <- roc_plot(test_df, 
+                          bias_score = 'NG_correlate_score',
+                          random_score = 'random_score',
+                          bias_label = 'NG_correlate_score')
+
+NG_correlate_score_plot
+```
+
+#find genes for each DSRCT
+```{r}
+DSRCT_NG_cor_vector_list <- lapply(c("DSRCT-1","DSRCT-4","DSRCT-2"), function(x) {
+                                  cells <- which(PDX_neogenes_filtered$lab_id == x)
+                                  cor_vector <- apply(PDX_neogenes_filtered@assays$RNA@data[,cells],
+                                                      1, function(x) cor(x,PDX_neogenes_filtered$DSRCT_NG[cells]))
+                                  cor_vector_df <- data.frame(r2=cor_vector, genes = names(cor_vector))
+                                  cor_vector_df
+})
+
+names(DSRCT_NG_cor_vector_list) <- c("DSRCT-1","DSRCT-4","DSRCT-2")
+```
+
+##dotplots for each PDX
+```{r, fig.width=10}
+genes <- DSRCT_NG_cor_vector_list[['DSRCT-2']][-grep('DSRCT', DSRCT_NG_cor_vector_list[['DSRCT-2']]$genes),] %>% top_n(30, r2) %>% pull(genes)
+DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r, fig.width=10}
+genes <- DSRCT_NG_cor_vector_list[['DSRCT-4']][-grep('DSRCT', DSRCT_NG_cor_vector_list[['DSRCT-4']]$genes),] %>% top_n(30, r2) %>% pull(genes)
+DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+```{r, fig.width=10}
+genes <- DSRCT_NG_cor_vector_list[['DSRCT-1']][-grep('DSRCT', DSRCT_NG_cor_vector_list[['DSRCT-1']]$genes),] %>% top_n(30, r2) %>% pull(genes)
+DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
+```
+
+
 
 ```{r, fig.width=6}
 genes <- rownames(PDX_neogenes_filtered)[grep('Ew-NG', rownames(PDX_neogenes_filtered))]
@@ -213,6 +475,8 @@ DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_t
 genes <- rownames(PDX_neogenes_filtered)[grep('CIC-NG', rownames(PDX_neogenes_filtered))]
 DotPlot(PDX_neogenes_filtered, features = genes) + theme(axis.text.x = element_text(angle =45, hjust=1))
 ```
+
+
 ```{r}
 DEGs <- FindAllMarkers(PDX_neogenes_filtered, only.pos = T, test.use = 'LR', return.thresh = 0.05, max.cells.per.ident = 1000)
 ```
